@@ -10,6 +10,7 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
 from datasets import load_dataset
 import json
+import glob
 
 
 class TextDataset(Dataset):
@@ -258,6 +259,141 @@ def convert_text_to_ascii_bits(text: str):
             ascii_bits.append(bit)
     return ascii_bits
 
+class BitVector:
+    """Wraps Python's integer bit operations to mimic a bit vector."""
 
-# Add missing import
-import glob
+    def __init__(self, value: int = 0, bit_length: int = 0):
+        self._value = value
+        self._length = bit_length
+
+    def push(self, val: int, bitwidth: int):
+        """Append the lower bitwidth bits from val, treating bit 0 as the least significant."""
+        if bitwidth < 0:
+            raise ValueError("bitwidth must be non-negative")
+        if bitwidth == 0:
+            return
+        mask = (1 << bitwidth) - 1
+        self._value |= (val & mask) << self._length
+        self._length += bitwidth
+
+    def get(self, start: int, length: int) -> int:
+        """Return integer composed of [start, start+length) bits."""
+        if start < 0 or length < 0:
+            raise ValueError("start and length must be non-negative")
+        if length == 0:
+            return 0
+        mask = (1 << length) - 1
+        return (self._value >> start) & mask
+
+    def __len__(self):
+        return self._length
+
+    def to_bytes(self) -> bytes:
+        """Convert to little-endian byte representation."""
+        if self._length == 0:
+            return b""
+        byte_length = (self._length + 7) // 8
+        return self._value.to_bytes(byte_length, byteorder="little")
+
+    def from_bytes(self, data: bytes, bit_length: int):
+        """Populate from little-endian bytes keeping only bit_length bits."""
+        if bit_length < 0:
+            raise ValueError("bit_length must be non-negative")
+        self._value = int.from_bytes(data, byteorder="little")
+        if bit_length < len(data) * 8:
+            mask = (1 << bit_length) - 1 if bit_length > 0 else 0
+            self._value &= mask
+        self._length = bit_length
+
+class BitSequence:
+    """A sequence of bits to encode with LZ78."""
+    def __init__(self, bits):
+        self.bits = bits
+    def alphabet_size(self):
+        return 2
+    def length(self):
+        return len(self.bits)
+    def get(self, i):
+        return self.bits[i]
+    def put_sym(self, sym):
+        self.bits.append(sym)
+    def iter(self):
+        return iter(self.bits)
+
+
+def _int_to_msb_bits(value: int) -> List[int]:
+    """Return the binary digits of value from MSB to LSB."""
+    if value <= 0:
+        raise ValueError("value must be positive when converting to bits")
+    bit_length = value.bit_length()
+    return [(value >> shift) & 1 for shift in range(bit_length - 1, -1, -1)]
+
+
+def elias_omega_coding(value: int, dest: Optional[BitVector] = None) -> BitVector:
+    """Append the Elias omega code for value to dest and return dest."""
+    if value < 1:
+        raise ValueError("Elias omega coding is only defined for positive integers")
+    if dest is None:
+        dest = BitVector()
+
+    if value == 1:
+        dest.push(0, 1)
+        return dest
+
+    segments = []
+    current = value
+    while current > 1:
+        segments.append(current)
+        current = current.bit_length() - 1
+
+    for segment in reversed(segments):
+        for bit in _int_to_msb_bits(segment):
+            dest.push(bit, 1)
+
+    dest.push(0, 1)
+    return dest
+
+
+def elias_omega_decoding(data: BitVector, start: int = 0) -> List[int]:
+    """Decode every Elias omega code stored in `data` starting at bit `start`."""
+    if start < 0:
+        raise ValueError("start must be non-negative")
+    if start > len(data):
+        raise ValueError("start offset beyond available data")
+
+    idx = start
+    decoded_values: List[int] = []
+
+    while idx < len(data):
+        value, used = _decode_single_elias_omega(data, idx)
+        decoded_values.append(value)
+        idx += used
+
+    return decoded_values
+
+
+def _decode_single_elias_omega(data: BitVector, start: int) -> Tuple[int, int]:
+    """Decode a single Elias omega code from `data` at bit position `start`."""
+    if start >= len(data):
+        raise ValueError("start offset beyond available data")
+
+    idx = start
+    total_len = len(data)
+    value = 1
+
+    while True:
+        if idx >= total_len:
+            raise ValueError("incomplete Elias omega code: missing terminator bit")
+        bit = data.get(idx, 1)
+        idx += 1
+        if bit == 0:
+            return value, idx - start
+
+        if idx + value > total_len:
+            raise ValueError("incomplete Elias omega code: missing payload bits")
+
+        decoded = 1
+        for _ in range(value):
+            decoded = (decoded << 1) | data.get(idx, 1)
+            idx += 1
+        value = decoded

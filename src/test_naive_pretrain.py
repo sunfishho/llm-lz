@@ -1,4 +1,4 @@
-from lz78_python import CharacterMap, CharacterSequence, LZ78Encoder, decompress_with_charmap
+from lz78_python import LZ78Encoder
 from data_utils import convert_text_to_ascii_bits
 
 
@@ -17,34 +17,18 @@ class BitSequence:
     def iter(self):
         return iter(self.bits)
 
-
-def naive_pretrain(text: str, charmap: CharacterMap):
-    char_seq = CharacterSequence.from_data(text, charmap)
-    encoder = LZ78Encoder()
-    encoded, trie_state = encoder.encode_with_tree(char_seq)
-    return encoded, trie_state
-
 def main():
     # Read in the text file
     with open("data/alice29.txt", "r", encoding="utf-8") as f:
         text = f.read()
 
     # Compress using LZ78
-    charmap = CharacterMap.from_data(text)
-    encoded, trie_state = naive_pretrain(text, charmap)
-    print(f"Original length: {len(text)}")
-    print(f"Compressed size: {len(encoded.data)}")
     ascii_bits = convert_text_to_ascii_bits(text)
     bit_sequence = BitSequence(ascii_bits)
     encoder = LZ78Encoder()
-    encoded_bits, trie_state_bits = encoder.encode_with_tree(bit_sequence)
+    encoded_bits, _, _ = encoder.encode_with_tree(bit_sequence)
     print(f"Original bit length (ASCII): {len(ascii_bits)}")
     print(f"Compressed (bit) size: {len(encoded_bits.data)}")
-
-    # Original length: 148481
-    # Compressed size: 574503
-
-    # we can clearly see that the compressed size is larger than the original text, implying that we are not close to compressing to entropy rate
 
     N = 4096
     N0 = 2048
@@ -57,18 +41,18 @@ def main():
 
 
     # Pretrain the LZ78 trie with the first k bits of x_train
-    pretrain_bits = x_train[:k]
-    pretrain_sequence = BitSequence(pretrain_bits)
-    lz_encoder = LZ78Encoder()
-    # Pretrain the encoder's trie
-    lz_encoder.pretrain(pretrain_sequence)
+    # pretrain_bits = x_train[:k]
+    # pretrain_sequence = BitSequence(pretrain_bits)
+    # lz_encoder = LZ78Encoder()
+    # # Pretrain the encoder's trie
+    # lz_encoder.pretrain(pretrain_sequence)
 
-    # Now, encode x_test using the pretrained trie
-    x_test_sequence = BitSequence(x_test)
-    encoded_test, _ = lz_encoder.encode_with_tree(x_test_sequence)
+    # # Now, encode x_test using the pretrained trie
+    # x_test_sequence = BitSequence(x_test)
+    # encoded_test, _ = lz_encoder.encode_with_tree(x_test_sequence)
 
-    print(f"Length of x_test: {len(x_test)}")
-    print(f"Compressed size of x_test (with pretrained trie): {len(encoded_test.data)}")
+    # print(f"Length of x_test: {len(x_test)}")
+    # print(f"Compressed size of x_test (with pretrained trie): {len(encoded_test.data)}")
 
 
 
