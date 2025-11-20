@@ -248,5 +248,16 @@ def lz78_sequence_to_bytes(sequence: List[int], alphabet_size: int = 256) -> byt
     return bytes([s % 256 for s in sequence])
 
 
+def convert_text_to_ascii_bits(text: str):
+    ascii_bits = []
+    for c in text:
+        ascii_val = ord(c)
+        for i in range(8):
+            # Take bits from most-significant to least-significant
+            bit = (ascii_val >> (7 - i)) & 1
+            ascii_bits.append(bit)
+    return ascii_bits
+
+
 # Add missing import
 import glob

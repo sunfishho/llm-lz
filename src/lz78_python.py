@@ -11,6 +11,7 @@ import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Iterator, Union, Callable
+from data_utils import convert_text_to_ascii_bits
 
 class BitVector:
     """Wraps Python's integer bit operations to mimic a bit vector."""
@@ -58,6 +59,22 @@ class BitVector:
             self._value &= mask
         self._length = bit_length
 
+class BitSequence:
+    """A sequence of bits to encode with LZ78."""
+    def __init__(self, bits):
+        self.bits = bits
+    def alphabet_size(self):
+        return 2
+    def length(self):
+        return len(self.bits)
+    def get(self, i):
+        return self.bits[i]
+    def put_sym(self, sym):
+        self.bits.append(sym)
+    def iter(self):
+        return iter(self.bits)
+
+
 
 class LZ78TraversalResult:
     """Result of traversing the LZ78 tree."""
@@ -73,13 +90,13 @@ class LZ78TrieState:
 
     transitions: Dict[Tuple[int, int], int] = field(default_factory=dict)
     next_index: Optional[int] = None
-    node_counts: Dict[int, int] = field(default_factory=dict)
+    node_counts: Dict[int, List[int]] = field(default_factory=dict)
 
     def __post_init__(self):
         # Ensure we keep our own copy of the mapping
         self.transitions = dict(self.transitions)
         # Ensure we keep our own copy of node_counts
-        self.node_counts = dict(self.node_counts)
+        self.node_counts = {k: list(v) for k, v in self.node_counts.items()}
         if self.next_index is None:
             self.next_index = max(self.transitions.values(), default=0) + 1
 
@@ -88,22 +105,35 @@ class LZ78TrieState:
         return LZ78TrieState(self.transitions, self.next_index, self.node_counts)
 
 
-class LZWData:
+class LZ78Data:
     """LZ78 tree data structure for compression."""
     
     def __init__(self, initial_state: Optional[LZ78TrieState] = None):
         if initial_state:
             self.map: Dict[Tuple[int, int], int] = dict(initial_state.transitions)
             self.next_index: int = initial_state.next_index or 1
-            self.node_counts: Dict[int, int] = dict(initial_state.node_counts)
+            # Copy counts from initial state, ensuring all nodes have counts initialized
+            self.node_counts: Dict[int, List[int]] = {
+                k: list(v) for k, v in initial_state.node_counts.items()
+            }
+            # Ensure all nodes in transitions have counts initialized
+            all_nodes = {0}
+            for (parent, sym), child in self.map.items():
+                all_nodes.add(parent)
+                all_nodes.add(child)
+            for node_idx in all_nodes:
+                if node_idx not in self.node_counts:
+                    self.node_counts[node_idx] = [0, 0]
         else:
             self.map = {}
             self.next_index = 1
-            self.node_counts: Dict[int, int] = {}
+            self.node_counts: Dict[int, List[int]] = {0: [0, 0]}
     
-    def increment_count(self, node_idx: int):
-        """Increment the count for a node."""
-        self.node_counts[node_idx] = self.node_counts.get(node_idx, 0) + 1
+    def increment_count(self, node_idx: int, symbol: int):
+        """Increment the count for traversing a symbol edge from node_idx."""
+        if node_idx not in self.node_counts:
+            self.node_counts[node_idx] = [0, 0]
+        self.node_counts[node_idx][symbol] += 1
     
     def traverse_root_to_leaf(self, input_iter: Iterator[int]) -> LZ78TraversalResult:
         """Traverse from root to leaf in the LZ78 tree."""
@@ -114,19 +144,13 @@ class LZWData:
         state_idx = node_idx
         added_leaf = None
         
-        # Increment count for starting node
-        self.increment_count(state_idx)
-        
         for sym in input_iter:
             if (state_idx, sym) in self.map:
+                # Move to next state
                 state_idx = self.map[(state_idx, sym)]
-                # Increment count for each node we traverse
-                self.increment_count(state_idx)
             else:
                 # Add new node to tree
                 self.map[(state_idx, sym)] = self.next_index
-                # Initialize count for new node
-                self.node_counts[self.next_index] = 1
                 self.next_index += 1
                 added_leaf = sym
                 break
@@ -201,113 +225,6 @@ class Sequence:
             yield self.get(i)
 
 
-class U8Sequence(Sequence):
-    """U8 sequence for alphabet sizes 3-256."""
-    
-    def __init__(self, data: List[int], alphabet_size: int):
-        self.data = data
-        self.alphabet_size_val = alphabet_size
-    
-    def alphabet_size(self) -> int:
-        return self.alphabet_size_val
-    
-    def length(self) -> int:
-        return len(self.data)
-    
-    def get(self, i: int) -> int:
-        if i >= self.length():
-            raise IndexError(f"Index {i} out of range for sequence of length {self.length()}")
-        return self.data[i]
-    
-    def put_sym(self, sym: int):
-        if sym >= self.alphabet_size():
-            raise ValueError(f"Symbol {sym} not in alphabet of size {self.alphabet_size()}")
-        self.data.append(sym)
-    
-    @classmethod
-    def from_data(cls, data: List[int], alphabet_size: int) -> 'U8Sequence':
-        """Create from data with validation."""
-        if any(x >= alphabet_size for x in data):
-            raise ValueError(f"Invalid symbol found for alphabet size of {alphabet_size}")
-        return cls(data, alphabet_size)
-
-
-class CharacterMap:
-    """Maps characters to integer symbols."""
-    
-    def __init__(self, char_to_sym: Dict[str, int], sym_to_char: List[str]):
-        self.char_to_sym = char_to_sym
-        self.sym_to_char = sym_to_char
-        self.alphabet_size = len(sym_to_char)
-    
-    @classmethod
-    def from_data(cls, data: str) -> 'CharacterMap':
-        """Create character map from string data."""
-        char_to_sym = {}
-        sym_to_char = []
-        seen_chars = set()
-        
-        for char in data:
-            if char not in seen_chars:
-                char_to_sym[char] = len(sym_to_char)
-                sym_to_char.append(char)
-                seen_chars.add(char)
-        
-        return cls(char_to_sym, sym_to_char)
-    
-    def encode(self, char: str) -> Optional[int]:
-        """Encode character to symbol."""
-        return self.char_to_sym.get(char)
-    
-    def decode(self, sym: int) -> Optional[str]:
-        """Decode symbol to character."""
-        if 0 <= sym < self.alphabet_size:
-            return self.sym_to_char[sym]
-        return None
-    
-    def encode_all(self, data: str) -> List[int]:
-        """Encode entire string."""
-        result = []
-        for char in data:
-            if char in self.char_to_sym:
-                result.append(self.char_to_sym[char])
-            else:
-                raise ValueError(f"Character '{char}' not in mapping")
-        return result
-
-
-class CharacterSequence(Sequence):
-    """Character sequence with character mapping."""
-    
-    def __init__(self, data: str, character_map: CharacterMap):
-        self.data = data
-        self.character_map = character_map
-        self.encoded = character_map.encode_all(data)
-    
-    def alphabet_size(self) -> int:
-        return self.character_map.alphabet_size
-    
-    def length(self) -> int:
-        return len(self.encoded)
-    
-    def get(self, i: int) -> int:
-        if i >= self.length():
-            raise IndexError(f"Index {i} out of range for sequence of length {self.length()}")
-        return self.encoded[i]
-    
-    def put_sym(self, sym: int):
-        char = self.character_map.decode(sym)
-        if char is None:
-            raise ValueError(f"Symbol {sym} not in character map")
-        self.data += char
-        self.encoded.append(sym)
-    
-    @classmethod
-    def from_data(cls, data: str, character_map: CharacterMap) -> 'CharacterSequence':
-        """Create from data with character map."""
-        return cls(data, character_map)
-
-
 def lz78_bits_to_encode_phrase(phrase_idx: int, alpha_size: int) -> int:
     """Calculate number of bits needed to encode a phrase."""
     return int(math.ceil(math.log2(phrase_idx + 1) + math.log2(alpha_size)))
@@ -329,36 +246,41 @@ def lz78_encode(
         EncodedSequence when capture_tree is False.
         Tuple[EncodedSequence, LZ78TrieState] when capture_tree is True.
     """
-    lzw = LZWData(initial_state)
+    lz78 = LZ78Data(initial_state)
     bits = BitVector()
     
     # Convert to list for easier indexing
     input_data = list(sequence.iter())
     input_idx = 0
     phrase_num = 0
+    log_likelihood = 0.0
     
     while input_idx < len(input_data):
         # Find the longest match starting from current position
         state_idx = 0
         match_length = 0
-        
-        # Increment count for root node (state 0) at start of each phrase
-        lzw.increment_count(state_idx)
-        
+        print(f'\n=== Phrase {phrase_num}: starting at input_idx={input_idx}, remaining bits={input_data[input_idx:]} ===')
         # Traverse the tree to find the longest match
         for i in range(input_idx, len(input_data)):
             sym = input_data[i]
-            if (state_idx, sym) in lzw.map:
-                state_idx = lzw.map[(state_idx, sym)]
+            print(f'  Processing bit[{i}]={sym} from state {state_idx}, counts={lz78.node_counts.get(state_idx, [0,0])}')
+            fraction = (lz78.node_counts.get(state_idx, [0,0])[sym] + 1) / (sum(lz78.node_counts.get(state_idx, [0,0])) + 2)
+            print(f'  fraction: {fraction}')
+            log_likelihood += math.log2(fraction)
+            lz78.increment_count(state_idx, sym)
+            if (state_idx, sym) in lz78.map:
+                # Count this edge traversal (we're traversing FROM state_idx with symbol sym)
+                old_state = state_idx
+                state_idx = lz78.map[(state_idx, sym)]
                 match_length += 1
-                # Increment count for each node we traverse
-                lzw.increment_count(state_idx)
+                print(f'    -> Traversed edge ({old_state}, {sym}) -> {state_idx}, match_length={match_length}')
             else:
                 # Add new node to tree
-                lzw.map[(state_idx, sym)] = lzw.next_index
-                # Initialize count for new node
-                lzw.node_counts[lzw.next_index] = 1
-                lzw.next_index += 1
+                new_node = lz78.next_index
+                lz78.map[(state_idx, sym)] = new_node
+                lz78.node_counts[new_node] = [0, 0]
+                print(f'    -> Created new node {new_node} via edge ({state_idx}, {sym})')
+                lz78.next_index += 1
                 break
         
         # Calculate bitwidth and encode
@@ -369,19 +291,14 @@ def lz78_encode(
         if input_idx + match_length < len(input_data):
             # There's a new symbol
             new_sym = input_data[input_idx + match_length]
+            print(f'  Encoding phrase: (state={state_idx}, new_sym={new_sym}), input_idx will become {input_idx + match_length + 1}')
             val = state_idx * sequence.alphabet_size() + new_sym
             input_idx += match_length + 1
         else:
-            # End of input - we need to encode the final symbol
-            # This happens when we've matched all remaining symbols
-            # We need to encode a single symbol that wasn't matched
-            if input_idx < len(input_data):
-                new_sym = input_data[input_idx]
-                val = state_idx * sequence.alphabet_size() + new_sym
-                input_idx += 1
-            else:
-                # No more symbols to process
-                break
+            # We've matched all remaining symbols - the last symbol processed created a new node
+            # So we've already processed everything, no need to encode another symbol
+            print(f'  Matched all remaining symbols, breaking (input_idx={input_idx}, match_length={match_length}, len={len(input_data)})')
+            break
         
         # Store in bit vector
         bits.push(val, bitwidth)
@@ -389,8 +306,8 @@ def lz78_encode(
     encoded = EncodedSequence(bits, sequence.length(), sequence.alphabet_size())
     
     if capture_tree:
-        return encoded, LZ78TrieState(lzw.map, lzw.next_index, lzw.node_counts)
-    return encoded
+        return encoded, LZ78TrieState(lz78.map, lz78.next_index, lz78.node_counts), log_likelihood
+    return encoded, log_likelihood
 
 
 def lz78_decode(sequence: Sequence, encoded: EncodedSequence) -> None:
@@ -532,13 +449,13 @@ def compress_text(text: str, alphabet_size: int = 256) -> EncodedSequence:
     return encoder.encode(sequence)
 
 
-def decompress_with_charmap(encoded: EncodedSequence, character_map: CharacterMap) -> str:
-    """Decompress using LZ78 and map symbols back to characters via CharacterMap."""
-    # Create an empty character sequence that appends decoded symbols as characters
-    sequence = CharacterSequence.from_data("", character_map)
+def decompress_bits(encoded: EncodedSequence) -> List[int]:
+    """Decompress bit sequence using LZ78."""
+    # Create an empty bit sequence for decoding
+    sequence = BitSequence([])
     encoder = LZ78Encoder()
     encoder.decode(sequence, encoded)
-    return sequence.data
+    return sequence.bits
 
 def _default_symbol_decoder(sym: int) -> str:
     """Fallback label for trie edges."""
@@ -573,76 +490,23 @@ def lz78_tree_to_dot(
     lines.append("}")
     return "\n".join(lines)
 
-
-def main():
-    """Test the LZ78 implementation."""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Python LZ78 encoder")
-    parser.add_argument("--text", type=str, help="Text to compress")
-    parser.add_argument("--alphabet-size", type=int, default=256, help="Alphabet size")
-    parser.add_argument("--test", action="store_true", help="Run tests")
-    args = parser.parse_args()
-    
-    if args.test:
-        # Run basic tests
-        print("Running LZ78 tests...")
-        
-        # Test 1: Simple text compression
-        test_text = "hello world hello world"
-        print(f"Original text: {test_text}")
-        
-        encoded = compress_text(test_text, 256)
-        print(f"Compressed size: {encoded.compressed_len_bytes()} bytes")
-        print(f"Compression ratio: {encoded.compression_ratio():.4f}")
-        
-        decompressed = decompress_with_charmap(encoded, charmap)
-        print(f"Decompressed text: {decompressed}")
-        print(f"Lossless: {test_text == decompressed}")
-        
-        # Test 2: Different alphabet sizes
-        print("\nTesting different alphabet sizes:")
-        for alpha_size in [8, 64, 256]:
-            encoded = compress_text(test_text, alpha_size)
-            print(f"Alphabet size {alpha_size}: ratio={encoded.compression_ratio():.4f}")
-        
-    elif args.text:
-        # Compress provided text
-        print(f"Compressing: {args.text}")
-        encoded = compress_text(args.text, args.alphabet_size)
-        
-        print(f"Original length: {len(args.text)} characters")
-        print(f"Compressed size: {encoded.compressed_len_bytes()} bytes")
-        print(f"Compression ratio: {encoded.compression_ratio():.4f}")
-        
-        # Test decompression
-        decompressed = decompress_with_charmap(encoded, charmap)
-        print(f"Decompressed: {decompressed}")
-        print(f"Lossless: {args.text == decompressed}")
-    
-    else:
-        # Default test
-        sample_text = "The quick brown fox jumps over the lazy dog. " * 5
-        print(f"Compressing sample text: {sample_text[:50]}...")
-        
-        encoded = compress_text(sample_text, 256)
-        print(f"Original length: {len(sample_text)} characters")
-        print(f"Compressed size: {encoded.compressed_len_bytes()} bytes")
-        print(f"Compression ratio: {encoded.compression_ratio():.4f}")
-        
-        decompressed = decompress_with_charmap(encoded, charmap)
-        print(f"Lossless: {sample_text == decompressed}")
-
-
 if __name__ == "__main__":
     # Example: visualize trie after encoding
-    text = "123531213112"
-    charmap = CharacterMap.from_data(text)
-    char_seq = CharacterSequence.from_data(text, charmap)
+    text = "1"
+    ascii_bits = convert_text_to_ascii_bits(text)
+    print(ascii_bits)
+    bit_sequence = BitSequence(ascii_bits)
     encoder = LZ78Encoder()
-    encoded, trie_state = encoder.encode_with_tree(char_seq)
-    dot = encoder.visualize_tree(trie_state, symbol_decoder=charmap.decode, output_path="lz78.dot")
+    encoded_bits, trie_state_bits, log_likelihood = encoder.encode_with_tree(bit_sequence)
+    # Visualize without charmap - just use default symbol decoder (shows 0/1 for bits)
+    dot = encoder.visualize_tree(trie_state_bits, output_path="lz78.dot")
     import subprocess
     subprocess.run(['dot', '-Tpng', 'lz78.dot', '-o', 'lz78.png'], check=True)
-    decoded = decompress_with_charmap(encoded, charmap)
-    print(f"Decoded text: {decoded}")
+    decoded_bits = decompress_bits(encoded_bits)
+    print(f"Match: {ascii_bits == decoded_bits}")
+    
+    # Print counts at each node
+    print("\nNode counts (node_idx: [count_0, count_1]):")
+    for node_idx in sorted(trie_state_bits.node_counts.keys()):
+        print(f"  Node {node_idx}: {trie_state_bits.node_counts[node_idx]}")
+    print(f"Log likelihood: {log_likelihood}")
