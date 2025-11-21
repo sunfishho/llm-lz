@@ -26,7 +26,7 @@ def main():
     ascii_bits = convert_text_to_ascii_bits(text)
     bit_sequence = BitSequence(ascii_bits)
     encoder = LZ78Encoder()
-    encoded_bits, _, _ = encoder.encode_with_tree(bit_sequence)
+    encoded_bits, _ = encoder.encode(bit_sequence)
     print(f"Original bit length (ASCII): {len(ascii_bits)}")
     print(f"Compressed (bit) size: {len(encoded_bits.data)}")
 

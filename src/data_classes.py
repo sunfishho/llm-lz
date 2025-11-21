@@ -6,12 +6,16 @@ import struct
 class BitVector:
     """Wraps Python's integer bit operations to mimic a bit vector."""
 
-    def __init__(self, value: int = 0, bit_length: int = 0):
+    def __init__(self, value: int = 0, bit_length: int | None = None):
         self._value = value
+        if bit_length is None:
+            bit_length = math.ceil(math.log2(value + 1))
         self._length = bit_length
 
-    def push(self, val: int, bitwidth: int):
+    def push(self, val: int, bitwidth: int | None = None):
         """Append the lower bitwidth bits from val, treating bit 0 as the least significant."""
+        if bitwidth is None:
+            bitwidth = math.ceil(math.log2(val + 1))
         if bitwidth < 0:
             raise ValueError("bitwidth must be non-negative")
         if bitwidth == 0:
@@ -20,8 +24,10 @@ class BitVector:
         self._value |= (val & mask) << self._length
         self._length += bitwidth
 
-    def get(self, start: int, length: int) -> int:
+    def get(self, start: int, length: int | None = None) -> int:
         """Return integer composed of [start, start+length) bits."""
+        if length is None:
+            length = self._length - start
         if start < 0 or length < 0:
             raise ValueError("start and length must be non-negative")
         if length == 0:
@@ -49,6 +55,9 @@ class BitVector:
             self._value &= mask
         self._length = bit_length
 
+    def __add__(self, other: 'BitVector') -> 'BitVector':
+        return BitVector(self._value + (other._value << self._length), self._length + other._length)
+
 
 class Sequence:
     """Base class for sequences that can be compressed."""
@@ -70,6 +79,8 @@ class Sequence:
         for i in range(self.length()):
             yield self.get(i)
 
+    def __add__(self, other: 'Sequence') -> 'Sequence':
+        raise NotImplementedError
 
 class BitSequence(Sequence):
     """A sequence of bits to encode with LZ78."""
@@ -85,6 +96,8 @@ class BitSequence(Sequence):
         self.bits.append(sym)
     def iter(self):
         return iter(self.bits)
+    def __add__(self, other: 'BitSequence') -> 'BitSequence':
+        return BitSequence(self.bits + other.bits)
 
 class EncodedSequence(Sequence):
     """Stores an encoded bitstream with metadata."""
@@ -130,3 +143,39 @@ class EncodedSequence(Sequence):
         bit_vector.from_bytes(data[offset:], data_length)
         
         return cls(bit_vector, uncompressed_length, alphabet_size)
+    
+    def __add__(self, other: 'EncodedSequence') -> 'EncodedSequence':
+        return EncodedSequence(self.data + other.data, self.uncompressed_length + other.uncompressed_length, self.alphabet_size)
+
+if __name__ == "__main__":
+    def test_bitvector_addition():
+        # Test BitVector addition (__add__)
+        bv1 = BitVector(11)
+        bv2 = BitVector(1, 3)
+        bv_sum = bv1 + bv2
+        assert bv_sum._value == 27 and bv_sum._length == 7, f"BitVector add failed: {bv_sum._value}, {bv_sum._length}"
+
+    def test_bitsequence_addition():
+        # Test BitSequence addition (__add__)
+        bs1 = BitSequence([1, 0, 1])
+        bs2 = BitSequence([0, 1])
+        bs_sum = bs1 + bs2
+        assert bs_sum.bits == [1, 0, 1, 0, 1], f"BitSequence add failed: {bs_sum.bits}"
+
+    def test_encodedsequence_addition():
+        # Test EncodedSequence addition (__add__)
+        bv1 = BitVector(11)
+        bv2 = BitVector(1, 3)
+        es1 = EncodedSequence(bv1, uncompressed_length=7, alphabet_size=2)
+        es2 = EncodedSequence(bv2, uncompressed_length=6, alphabet_size=2)
+        es_sum = es1 + es2
+        assert es_sum.data._value == 27 and es_sum.data._length == 7, f"EncodedSequence add failed: {es_sum.data._value}, {es_sum.data._length}"
+        assert es_sum.uncompressed_length == 13, f"EncodedSequence add failed: {es_sum.uncompressed_length}"
+
+    def test_all():
+        test_bitvector_addition()
+        test_bitsequence_addition()
+        test_encodedsequence_addition()
+        print("All addition tests passed.")
+
+    test_all()

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Iterator, Union, Callable
 from data_utils import convert_text_to_ascii_bits, elias_omega_coding, elias_omega_decoding
 from data_classes import BitVector, BitSequence, Sequence, EncodedSequence
+from itertools import product
 
 
 class LZ78TraversalResult:
@@ -71,9 +72,10 @@ class LZ78Encoder:
     
     def encode(
             self,
-            sequence: Sequence,
+            sequence: BitSequence,
             capture_tree: bool = False,
-    ):
+            include_last_subphrase: bool = True,
+    ) -> Tuple[EncodedSequence, Optional[LZ78TrieState], float]:
         """Compress a sequence using LZ78.
 
         Args:
@@ -88,22 +90,19 @@ class LZ78Encoder:
         bits = BitVector()
         
         # Convert to list for easier indexing
-        input_data = list(sequence.iter())
+        input_data = sequence.bits[:]
         input_idx = 0
         phrase_num = 0
-        log_likelihood = 0.0
+        log_likelihood: float = 0.0
         lz78 = self.tree
-        
         while input_idx < len(input_data):
             # Find the longest match starting from current position
             state_idx = 0
             match_length = 0
             terminated = False
-            last_sym = None
             # Traverse the tree to find the longest match
             for i in range(input_idx, len(input_data)):
                 sym = input_data[i]
-                last_sym = sym
                 prob = (lz78.node_counts.get(state_idx, [0,0])[sym] + 1) / (sum(lz78.node_counts.get(state_idx, [0,0])) + 2)
                 log_likelihood += math.log2(prob)
                 lz78.increment_count(state_idx, sym)
@@ -125,42 +124,49 @@ class LZ78Encoder:
             # Calculate bitwidth and encode
             
             # The value to encode: state_idx * alphabet_size + new_symbol
+            if terminated:
+                # There's a new symbol
+                new_sym = input_data[input_idx + match_length]
+                # Encode the pair (num of phrases since parent node was created, new symbol)
+                val = (phrase_num - lz78.node_to_init_time[lz78.parent_map[new_node]] - 1) * sequence.alphabet_size() + new_sym
+                phrase_num += 1
+                # Store in bit vector using Elias omega codes
+                elias_omega_coding(val + 1, bits)
             if (input_idx + match_length + 1 >= len(input_data)):
-                # we keep adding 0s until we hit a leaf node
+                # at the end of the input
+                if not include_last_subphrase:
+                    # we need to check if we just started a new subphrase or if we are in the middle of a subphrase
+                    # do not put padding
+                    break
                 num_appended = 0
-                while (state_idx, last_sym) in lz78.map:
-                    state_idx = lz78.map[(state_idx, last_sym)]
-                    num_appended += 1
                 if not terminated:
-                    # if we need padding, we encode this with num_zeros + 1
-                    # if we don't need padding, we encode this with 1
+                    num_appended += 1
+                # we keep adding sym until we hit a leaf node
+                while (state_idx, sym) in lz78.map and not terminated:
+                    state_idx = lz78.map[(state_idx, sym)]
                     num_appended += 1
                 if num_appended > 0:
-                    val = (phrase_num - lz78.node_to_init_time[lz78.parent_map[state_idx]] - 1) * sequence.alphabet_size() + last_sym
+                    # if terminated is true, we will not reach here so we don't need to worry about state_idx being 0
+                    val = (phrase_num - lz78.node_to_init_time[state_idx] - 1) * sequence.alphabet_size() + sym
                     elias_omega_coding(val + 1, bits)
                 elias_omega_coding(num_appended + 1, bits)
                 break
-            # There's a new symbol
-            new_sym = input_data[input_idx + match_length]
-            # Encode the pair (num of phrases since parent node was created, new symbol)
-            val = (phrase_num - lz78.node_to_init_time[lz78.parent_map[new_node]] - 1) * sequence.alphabet_size() + new_sym
-            input_idx += match_length + 1
-            phrase_num += 1
-            # Store in bit vector using Elias omega codes
-            elias_omega_coding(val + 1, bits)
-        
+            if terminated:
+                # need to update input_idx but not before we check the condition for hitting the end of the data
+                input_idx += match_length + 1
         encoded = EncodedSequence(bits, sequence.length(), sequence.alphabet_size())
         
         if capture_tree:
             return encoded, LZ78TrieState(lz78.map, lz78.next_index, lz78.node_counts), log_likelihood
         return encoded, log_likelihood
 
-    def decode(self, encoded: EncodedSequence) -> BitSequence:
+    @classmethod
+    def decode(cls, encoded: EncodedSequence) -> BitSequence:
         """Decode a sequence using LZ78."""
         encoded_bits = encoded.data
         decoded_integers = [x - 1 for x in elias_omega_decoding(encoded_bits)]
         padding = decoded_integers[-1]
-        decoded_integers = decoded_integers[:len(decoded_integers) - 1]
+        decoded_integers = decoded_integers[:-1]
         tuple_list = []
         output_data: List[int] = []
         for integer in decoded_integers:
@@ -176,24 +182,32 @@ class LZ78Encoder:
             output_data.extend(reversed(symbols_in_phrase))
         if padding > 0:
             # this is checking for the case where we just reached the root node after finishing a phrase
-            output_data = output_data[:len(output_data) - padding + 1]
+            output_data = output_data[:len(output_data) - padding]
         return BitSequence(output_data)
 
-    def encode_with_tree(
-        self,
-        sequence: Sequence,
-        initial_state: Optional[LZ78TrieState] = None,
-    ):
-        """Encode a sequence and capture the resulting LZ78 trie state."""
-        return self.encode(sequence, capture_tree=True)
-    
-    def pretrain(
-        self,
-        sequence: Sequence,
-        initial_state: Optional[LZ78TrieState] = None,
-    ) -> LZ78TrieState:
-        """Update the base trie by encoding a sequence (e.g., for warm-starting)."""
-        _, tree = self.encode_with_tree(sequence, initial_state=initial_state)
+    @classmethod
+    def find_pretrain_encoded(cls, pretrain_sequence: BitSequence) -> Tuple[EncodedSequence, float]:
+        pretrain_encoder = LZ78Encoder()
+        pretrain_encoded, pretrain_ll = pretrain_encoder.encode(pretrain_sequence, include_last_subphrase=False)
+        return pretrain_encoded, pretrain_ll
+
+    @classmethod
+    def pretrain(cls, pretrain_sequence: BitSequence, main_sequence: BitSequence):
+        total_sequence = pretrain_sequence + main_sequence
+        total_encoder = LZ78Encoder()
+        total_encoded, total_ll = total_encoder.encode(total_sequence)
+        pretrain_encoded, pretrain_ll = cls.find_pretrain_encoded(pretrain_sequence)
+        len_pretrain_encoded = pretrain_encoded.data._length
+        encoded_length = total_encoded.uncompressed_length - pretrain_encoded.uncompressed_length
+        encoded_bitvector = BitVector(total_encoded.data.get(len_pretrain_encoded), total_encoded.data._length - len_pretrain_encoded)
+        return EncodedSequence(encoded_bitvector, encoded_length, total_encoded.alphabet_size), total_ll - pretrain_ll
+
+    @classmethod
+    def decode_pretrained(cls, pretrain_sequence: BitSequence, encoded: EncodedSequence) -> BitSequence:
+        pretrain_encoded, _ = cls.find_pretrain_encoded(pretrain_sequence)
+        total_decoded = cls.decode(pretrain_encoded + encoded)
+        len_pretrain = len(pretrain_sequence.bits)
+        return BitSequence(total_decoded.bits[len_pretrain:])
     
     def get_base_tree(self) -> Optional[LZ78TrieState]:
         """Return a copy of the current base trie state."""
@@ -223,14 +237,6 @@ class LZ78Encoder:
         if output_path:
             Path(output_path).write_text(dot_text, encoding="utf-8")
         return dot_text
-
-
-def decompress_bits(encoded: EncodedSequence) -> List[int]:
-    """Decompress bit sequence using LZ78."""
-    # Create an empty bit sequence for decoding
-    encoder = LZ78Encoder()
-    sequence = encoder.decode(encoded)
-    return sequence.bits
 
 def _default_symbol_decoder(sym: int) -> str:
     """Fallback label for trie edges."""
@@ -268,37 +274,68 @@ def lz78_tree_to_dot(
 if __name__ == "__main__":
     # Example: visualize trie after encoding
     # Check that for all binary strings up to length 5, decompression matches original
+
+    # bitseq = BitSequence([1,0,1,0,1])
+    # encoder = LZ78Encoder()
+    # encoded, _ = encoder.encode(bitseq, include_last_subphrase=False)
+    # decoded = LZ78Encoder.decode(encoded).bits
+    # print(f'decoded: {decoded}')
+
+    # max_len = 10
+    # all_ok = True
+    # for n in range(1, max_len + 1):
+    #     for bits_tuple in product([0,1], repeat=n):
+    #         print(f'bits_tuple: {bits_tuple}')
+    #         orig_bits = list(bits_tuple)
+    #         bitseq = BitSequence(orig_bits)
+    #         encoder = LZ78Encoder()
+    #         encoded, _ = encoder.encode(bitseq)
+    #         decoded = LZ78Encoder.decode(encoded).bits
+    #         if decoded != orig_bits:
+    #             print(f"Fail for {orig_bits}: decoded {decoded}")
+    #             all_ok = False
+    # if all_ok:
+    #     print(f"All binary strings of length ≤ {max_len} were encoded/decoded losslessly.")
+
+    # bitseq = BitSequence([1])
+    # pretrain_bits = BitSequence([1])
+    # encoded, ll = LZ78Encoder.pretrain(pretrain_bits, bitseq)
     from itertools import product
 
-    max_len = 5
-    all_ok = True
-    for n in range(1, max_len + 1):
-        for bits_tuple in product([0,1], repeat=n):
-            orig_bits = list(bits_tuple)
-            bitseq = BitSequence(orig_bits)
-            encoder = LZ78Encoder()
-            encoded, _, _ = encoder.encode_with_tree(bitseq)
-            decoded = decompress_bits(encoded)
-            if decoded != orig_bits:
-                print(f"Fail for {orig_bits}: decoded {decoded}")
-                all_ok = False
-    if all_ok:
-        print("All binary strings of length ≤ 5 were encoded/decoded losslessly.")
-    # ascii_bits = convert_text_to_ascii_bits(text)
-    # print(ascii_bits)
-    # bit_sequence = BitSequence(ascii_bits)
-    # encoder = LZ78Encoder()
-    # encoded_bits, trie_state_bits, log_likelihood = encoder.encode_with_tree(bit_sequence)
-    # # Visualize without charmap - just use default symbol decoder (shows 0/1 for bits)
-    # dot = encoder.visualize_tree(trie_state_bits, output_path="lz78.dot")
-    # import subprocess
-    # subprocess.run(['dot', '-Tpng', 'lz78.dot', '-o', 'lz78.png'], check=True)
-    # decoded_bits = decompress_bits(encoded_bits)
-    # print(decoded_bits)
-    # print(f"Match: {ascii_bits == decoded_bits}")
+    def check_pretrain_encoder_all_binary_strings():
+        max_len = 3
+        pretrain_len = 5
+        all_ok = True
+
+        encoder = LZ78Encoder()
+
+        for data_bits in product([0, 1], repeat=max_len):
+            for pre_bits in product([0, 1], repeat=pretrain_len):
+                bitseq = BitSequence(list(data_bits))
+                pretrain_bits = BitSequence(list(pre_bits))
+                encoder = LZ78Encoder()
+                encoded, _ = encoder.pretrain(pretrain_bits, bitseq)
+                pretrain_encoder = LZ78Encoder()
+                pretrain_encoded, _ = pretrain_encoder.encode(pretrain_bits, include_last_subphrase=False)
+                total_encoder = LZ78Encoder()
+                total_encoded, _ = total_encoder.encode(pretrain_bits + bitseq)
+                # print(f'pretrain_encoded: {pretrain_encoded.data._value, pretrain_encoded.data._length}')
+                # print(f'encoded: {encoded.data._value, encoded.data._length}')
+                # print(f'pretrain + encoded: {total_encoded.data._value, total_encoded.data._length}')
+
+                # Decode
+                decoded = LZ78Encoder.decode_pretrained(pretrain_bits, encoded).bits
+                if decoded != list(data_bits):
+                    print(f"Fail for data={list(data_bits)} with pretrain={list(pre_bits)}: decoded {decoded}")
+                    all_ok = False
+        if all_ok:
+            print(f"All bit strings of length {max_len} compressed with all pretrainings of length {pretrain_len} succeed with lossless roundtrip.")
+
+    check_pretrain_encoder_all_binary_strings()
     
     # Print counts at each node
     # print("\nNode counts (node_idx: [count_0, count_1]):")
     # for node_idx in sorted(trie_state_bits.node_counts.keys()):
     #     print(f"  Node {node_idx}: {trie_state_bits.node_counts[node_idx]}")
     # print(f"Log likelihood: {log_likelihood}")
+    pass
