@@ -11,6 +11,7 @@ from transformers import AutoTokenizer
 from datasets import load_dataset
 import json
 import glob
+from data_classes import BitVector, BitSequence, Sequence, EncodedSequence
 
 
 class TextDataset(Dataset):
@@ -258,68 +259,6 @@ def convert_text_to_ascii_bits(text: str):
             bit = (ascii_val >> (7 - i)) & 1
             ascii_bits.append(bit)
     return ascii_bits
-
-class BitVector:
-    """Wraps Python's integer bit operations to mimic a bit vector."""
-
-    def __init__(self, value: int = 0, bit_length: int = 0):
-        self._value = value
-        self._length = bit_length
-
-    def push(self, val: int, bitwidth: int):
-        """Append the lower bitwidth bits from val, treating bit 0 as the least significant."""
-        if bitwidth < 0:
-            raise ValueError("bitwidth must be non-negative")
-        if bitwidth == 0:
-            return
-        mask = (1 << bitwidth) - 1
-        self._value |= (val & mask) << self._length
-        self._length += bitwidth
-
-    def get(self, start: int, length: int) -> int:
-        """Return integer composed of [start, start+length) bits."""
-        if start < 0 or length < 0:
-            raise ValueError("start and length must be non-negative")
-        if length == 0:
-            return 0
-        mask = (1 << length) - 1
-        return (self._value >> start) & mask
-
-    def __len__(self):
-        return self._length
-
-    def to_bytes(self) -> bytes:
-        """Convert to little-endian byte representation."""
-        if self._length == 0:
-            return b""
-        byte_length = (self._length + 7) // 8
-        return self._value.to_bytes(byte_length, byteorder="little")
-
-    def from_bytes(self, data: bytes, bit_length: int):
-        """Populate from little-endian bytes keeping only bit_length bits."""
-        if bit_length < 0:
-            raise ValueError("bit_length must be non-negative")
-        self._value = int.from_bytes(data, byteorder="little")
-        if bit_length < len(data) * 8:
-            mask = (1 << bit_length) - 1 if bit_length > 0 else 0
-            self._value &= mask
-        self._length = bit_length
-
-class BitSequence:
-    """A sequence of bits to encode with LZ78."""
-    def __init__(self, bits):
-        self.bits = bits
-    def alphabet_size(self):
-        return 2
-    def length(self):
-        return len(self.bits)
-    def get(self, i):
-        return self.bits[i]
-    def put_sym(self, sym):
-        self.bits.append(sym)
-    def iter(self):
-        return iter(self.bits)
-
 
 def _int_to_msb_bits(value: int) -> List[int]:
     """Return the binary digits of value from MSB to LSB."""

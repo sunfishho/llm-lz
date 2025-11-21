@@ -11,7 +11,8 @@ import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Iterator, Union, Callable
-from data_utils import convert_text_to_ascii_bits, elias_omega_coding, elias_omega_decoding, BitVector, BitSequence
+from data_utils import convert_text_to_ascii_bits, elias_omega_coding, elias_omega_decoding
+from data_classes import BitVector, BitSequence, Sequence, EncodedSequence
 
 
 class LZ78TraversalResult:
@@ -58,73 +59,6 @@ class LZ78Tree:
         if node_idx not in self.node_counts:
             self.node_counts[node_idx] = [0, 0]
         self.node_counts[node_idx][symbol] += 1
-
-
-class EncodedSequence:
-    """Stores an encoded bitstream with metadata."""
-    
-    def __init__(self, data: BitVector, uncompressed_length: int, alphabet_size: int):
-        self.data = data
-        self.uncompressed_length = uncompressed_length
-        self.alphabet_size = alphabet_size
-    
-    def compression_ratio(self) -> float:
-        """Calculate compression ratio."""
-        if self.uncompressed_length == 0:
-            return 0.0
-        return len(self.data) / (self.uncompressed_length * math.log2(self.alphabet_size))
-    
-    def compressed_len_bytes(self) -> int:
-        """Length of compressed data in bytes."""
-        return (len(self.data) + 7) // 8
-    
-    def to_bytes(self) -> bytes:
-        """Convert to bytes for storage."""
-        result = bytearray()
-        # Header: alphabet_size (4 bytes), uncompressed_length (8 bytes), data_length (8 bytes)
-        result.extend(struct.pack('<I', self.alphabet_size))
-        result.extend(struct.pack('<Q', self.uncompressed_length))
-        result.extend(struct.pack('<Q', len(self.data)))
-        # Data
-        result.extend(self.data.to_bytes())
-        return bytes(result)
-    
-    @classmethod
-    def from_bytes(cls, data: bytes) -> 'EncodedSequence':
-        """Create from bytes."""
-        offset = 0
-        alphabet_size = struct.unpack('<I', data[offset:offset+4])[0]
-        offset += 4
-        uncompressed_length = struct.unpack('<Q', data[offset:offset+8])[0]
-        offset += 8
-        data_length = struct.unpack('<Q', data[offset:offset+8])[0]
-        offset += 8
-        
-        bit_vector = BitVector()
-        bit_vector.from_bytes(data[offset:], data_length)
-        
-        return cls(bit_vector, uncompressed_length, alphabet_size)
-
-
-class Sequence:
-    """Base class for sequences that can be compressed."""
-    
-    def alphabet_size(self) -> int:
-        raise NotImplementedError
-    
-    def length(self) -> int:
-        raise NotImplementedError
-    
-    def get(self, i: int) -> int:
-        raise NotImplementedError
-    
-    def put_sym(self, sym: int):
-        raise NotImplementedError
-    
-    def iter(self) -> Iterator[int]:
-        """Iterator over sequence symbols."""
-        for i in range(self.length()):
-            yield self.get(i)
 
 
 class LZ78Encoder:
