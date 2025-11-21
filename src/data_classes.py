@@ -97,6 +97,8 @@ class BitSequence(Sequence):
     def iter(self):
         return iter(self.bits)
     def __add__(self, other: 'BitSequence') -> 'BitSequence':
+        if not isinstance(other, BitSequence):
+            return NotImplemented
         return BitSequence(self.bits + other.bits)
 
 class EncodedSequence(Sequence):
