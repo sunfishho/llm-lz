@@ -7,7 +7,7 @@ import time
 def main():
     # Read in the text file
     start_time = time.time()
-    with open("data/alice29.txt", "r", encoding="utf-8") as f:
+    with open("../data/alice29.txt", "r", encoding="utf-8") as f:
         text = f.read()
     read_file_time = time.time()
     # Compress using LZ78
