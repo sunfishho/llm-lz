@@ -103,8 +103,8 @@ class AliceLSTMPolicy(ActorCriticPolicy):
 
 def train():
     seed = 78
-    model_dir = "model_saves"
-    log_dir = "logs"
+    model_dir = "model_saves_lstm"
+    log_dir = "logs_lstm"
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
 
@@ -115,7 +115,8 @@ def train():
     iters = 0
     while iters < NUM_TIMESTEPS:
         model.learn(total_timesteps=NUM_TIMESTEPS, reset_num_timesteps=False)
-        model.save(os.path.join(model_dir, "alice_compressor.pkl"))
+        if iters % 1000 == 0:
+            model.save(os.path.join(model_dir, "alice_compressor.pkl"))
         iters += 1
 
 if __name__ == "__main__":

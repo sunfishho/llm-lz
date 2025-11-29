@@ -6,11 +6,12 @@ from gymnasium import spaces
 from gymnasium.envs.registration import register
 from typing import List, Tuple, Optional
 import pdb
-
+from time import perf_counter
 register(
     id='alice-compressor-v0',
     entry_point='alice_compressor:AliceCompressorEnv'
 )
+compute_reward_time = 0.0
 
 def find_allowable_chars(text: str) -> List[str]:
     """
@@ -41,11 +42,14 @@ def compute_reward(pretrain_data: str, target_text: str, charmap: CharacterMap, 
     Returns:
         Negative compression length in bits (lower is better, so we'll negate for reward)
     """
+    global compute_reward_time
+    start = perf_counter()
     encoder = LZ78Encoder()
     pretrain_data_str = ''.join(pretrain_data)
     encoder.pretrain(Sequence(pretrain_data_str, charmap=charmap))
     encoded = encoder.encode(Sequence(target_text, charmap=charmap))
     compression_len = get_compression_length(encoded)
+    compute_reward_time += perf_counter() - start
     # print(f"Pretrained length: {compression_len}, No pretrain length: {no_pretrain_len}")
     return -compression_len + no_pretrain_len
 
@@ -73,6 +77,7 @@ class AliceCompressorEnv(gym.Env):
         self.chunk_size = chunk_size
         self.train_data, self.test_data = generate_train_test(self.text, train_fraction=0.7, chunk_size = self.chunk_size, seed=self.seed)
         self.max_pretrain_length = max_pretrain_length
+        self.episode_idx = 0
         # surely the max length of the total compression is two times the length of the entire text?
         self._pretrain_sequence = [] # string of characters in pretrained sequence
         # although in theory this could break, i think in practice it will be fine
@@ -125,11 +130,12 @@ class AliceCompressorEnv(gym.Env):
         """
         # IMPORTANT: Must call this first to seed the random number generator
         super().reset(seed=seed)
+        self.episode_idx += 1
         self._pretrain_sequence = []
         return self._get_obs(), {}
 
 
-    def step(self, action: int):
+    def step(self, action: int, size_batch: int = 5):
         """Execute one timestep within the environment.
 
         Args:
@@ -143,12 +149,11 @@ class AliceCompressorEnv(gym.Env):
 
         # Simple reward structure: +1 for reaching target, 0 otherwise
         # Alternative: could give small negative rewards for each step to encourage efficiency
-        reward = 0
         # convert the sequence of ints to a string that can be used to compute the reward
-        for i, train_data in enumerate(self.train_data):
-            reward += compute_reward(self._pretrain_sequence, train_data, self.charmap, self.no_pretrain_len[i])
-        # normalize by the number of training examples
-        reward /= len(self.train_data)
+        # switch to just randomly choosing one chunk of train data to compute the reward
+        randomly_chosen_index = np.random.randint(len(self.train_data), size=size_batch)
+        rewards = [compute_reward(self._pretrain_sequence, self.train_data[i], self.charmap, self.no_pretrain_len[i]) for i in randomly_chosen_index]
+        reward = np.mean(rewards)
         return self._get_obs(), reward, terminated, False, {}
 
 if __name__ == "__main__":
