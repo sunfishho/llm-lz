@@ -46,6 +46,7 @@ def compute_reward(pretrain_data: str, target_text: str, charmap: CharacterMap, 
     encoder.pretrain(Sequence(pretrain_data_str, charmap=charmap))
     encoded = encoder.encode(Sequence(target_text, charmap=charmap))
     compression_len = get_compression_length(encoded)
+    # print(f"Pretrained length: {compression_len}, No pretrain length: {no_pretrain_len}")
     return -compression_len + no_pretrain_len
 
 
