@@ -15,6 +15,14 @@ import os
 
 device = "cpu"
 seed = 78
+def linear_schedule(initial_value: float):
+    """
+    Linear decay of the learning rate from initial_value to 0 over training.
+    """
+    def schedule(progress_remaining: float) -> float:
+        return progress_remaining * initial_value
+
+    return schedule
 
 class RewardFromObs:
     """
@@ -174,7 +182,7 @@ def train():
         charmap=env.charmap,
         no_pretrain_len=env.no_pretrain_len,
         int_to_char=env.int_to_char,
-        sample_k=5,
+        sample_k=3,
         seed=seed,
     )
     model = PPO(
@@ -184,6 +192,7 @@ def train():
         device=device,
         tensorboard_log=log_dir,
         seed=seed,
+        # learning_rate=linear_schedule(1e-3),
         policy_kwargs={"reward_evaluator": reward_evaluator},
     )
 
