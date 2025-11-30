@@ -8,18 +8,19 @@ import gymnasium as gym
 import os
 
 class SavePolicyCallback(BaseCallback):
-    def __init__(self, save_freq: int, save_path: str, prefix: str = "policy", verbose: int = 0):
+    def __init__(self, save_freq: int, save_path: str, prefix: str = "policy", num_layers: int = 1, hidden_size: int = 256, verbose: int = 0):
         super().__init__(verbose)
         self.save_freq = save_freq
         self.save_path = save_path
         self.prefix = prefix
-
+        self.num_layers = num_layers
+        self.hidden_size = hidden_size
     def _init_callback(self) -> None:
         os.makedirs(self.save_path, exist_ok=True)
 
     def _on_step(self) -> bool:
         if self.num_timesteps > 0 and self.num_timesteps % self.save_freq == 0:
-            path = os.path.join(self.save_path, f"{self.prefix}_hidden_size=256_num_layers=5.pkl")
+            path = os.path.join(self.save_path, f"{self.prefix}_hidden_size={self.hidden_size}_num_layers={self.num_layers}.pkl")
             self.model.policy.save(path)
             if self.verbose > 0:
                 print(f"Saved policy to {path}")

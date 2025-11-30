@@ -15,6 +15,8 @@ import os
 
 device = "cpu"
 seed = 78
+num_layers = 3
+
 def linear_schedule(initial_value: float):
     """
     Linear decay of the learning rate from initial_value to 0 over training.
@@ -65,7 +67,7 @@ class SeqLenLSTMExtractor(BaseFeaturesExtractor):
     and concatenates it with an embedding of the sequence length.
     """
 
-    def __init__(self, observation_space: spaces.Dict, lstm_hidden_size: int = 256, num_layers: int = 5):
+    def __init__(self, observation_space: spaces.Dict, lstm_hidden_size: int = 256, num_layers: int = num_layers):
         super().__init__(observation_space, features_dim=lstm_hidden_size)
         seq_space = observation_space["seq"]
         assert isinstance(seq_space, spaces.Box), "seq observation must be a Box space"
@@ -81,7 +83,6 @@ class SeqLenLSTMExtractor(BaseFeaturesExtractor):
             hidden_size=self.lstm_hidden_size,
             batch_first=True,
             num_layers=num_layers,
-            dropout = 0.3,
         )
         self.len_embedding = nn.Embedding(len_space.n, self.lstm_hidden_size)
         self.projection = nn.Linear(self.lstm_hidden_size * 2, self.lstm_hidden_size)
@@ -130,7 +131,7 @@ class AliceLSTMPolicy(ActorCriticPolicy):
         # Avoid double-passing extractor kwargs when loading from checkpoints
         reward_evaluator = kwargs.pop("reward_evaluator", reward_evaluator)
         kwargs.setdefault("features_extractor_class", SeqLenLSTMExtractor)
-        kwargs.setdefault("features_extractor_kwargs", {"lstm_hidden_size": 256, "num_layers": 5})
+        kwargs.setdefault("features_extractor_kwargs", {"lstm_hidden_size": 256, "num_layers": num_layers})
         kwargs.setdefault("net_arch", [dict(pi=[64, 64], vf=[64, 64])])
         kwargs.setdefault("activation_fn", nn.ReLU)
         super().__init__(
@@ -201,6 +202,8 @@ def train():
         save_freq=2048,
         save_path=model_dir,
         prefix="alice_compressor_policy",
+        num_layers=num_layers,
+        hidden_size=256,
         verbose=1,
     )
     reward_plot_callback = RewardPlotCallback(
@@ -218,6 +221,6 @@ def train():
             callback=[save_callback, reward_plot_callback, rollout_print_callback, ProgressBarCallback()],
         )
         iters += 1
-    model.policy.save(os.path.join(model_dir, "alice_compressor_policy_hidden_size=256_num_layers=5.pkl"))
+    model.policy.save(os.path.join(model_dir, f"alice_compressor_policy_hidden_size=256_num_layers={num_layers}.pkl"))
 if __name__ == "__main__":
     train()

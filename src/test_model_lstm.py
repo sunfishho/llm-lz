@@ -8,12 +8,14 @@ import numpy as np
 import agent
 from agent import AliceLSTMPolicy
 from alice_compressor import AliceCompressorEnv, compute_reward, get_compression_length
-from lz78 import LZ78Encoder, Sequence
+from lz78 import LZ78Encoder, Sequence\
+
+num_layers = 3
 
 
 def sample_rollout(model_path=None, rollout_length=100):
     env = AliceCompressorEnv(seed=78)
-    model_path = "model_policy/alice_compressor_policy_hidden_size=256_num_layers=5.pkl"
+    model_path = f"model_policy/alice_compressor_policy_hidden_size=256_num_layers={num_layers}.pkl"
     print(f"Loading policy from {model_path}")
     # Load only the policy network saved during training
     # Models were saved when agent.py was run as __main__, so expose classes on __main__ for unpickling
