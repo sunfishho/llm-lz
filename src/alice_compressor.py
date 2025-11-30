@@ -1,17 +1,13 @@
 import gymnasium as gym
 import numpy as np
-from tqdm import tqdm  # Progress bar
 from lz78 import Sequence, LZ78Encoder, CharacterMap
 from gymnasium import spaces
 from gymnasium.envs.registration import register
 from typing import List, Tuple, Optional
-import pdb
-from time import perf_counter
 register(
     id='alice-compressor-v0',
     entry_point='alice_compressor:AliceCompressorEnv'
 )
-compute_reward_time = 0.0
 
 def find_allowable_chars(text: str) -> List[str]:
     """
@@ -42,15 +38,11 @@ def compute_reward(pretrain_data: str, target_text: str, charmap: CharacterMap, 
     Returns:
         Negative compression length in bits (lower is better, so we'll negate for reward)
     """
-    global compute_reward_time
-    start = perf_counter()
     encoder = LZ78Encoder()
     pretrain_data_str = ''.join(pretrain_data)
     encoder.pretrain(Sequence(pretrain_data_str, charmap=charmap))
     encoded = encoder.encode(Sequence(target_text, charmap=charmap))
     compression_len = get_compression_length(encoded)
-    compute_reward_time += perf_counter() - start
-    # print(f"Pretrained length: {compression_len}, No pretrain length: {no_pretrain_len}")
     return -compression_len + no_pretrain_len
 
 
@@ -76,19 +68,16 @@ class AliceCompressorEnv(gym.Env):
         self.seed = seed
         self.chunk_size = chunk_size
         self.train_data, self.test_data = generate_train_test(self.text, train_fraction=0.7, chunk_size = self.chunk_size, seed=self.seed)
-        self.max_pretrain_length = max_pretrain_length
-        self.episode_idx = 0
+        self.max_pretrain_length: int = max_pretrain_length
+        self.episode_idx: int = 0
         # surely the max length of the total compression is two times the length of the entire text?
-        self._pretrain_sequence = [] # string of characters in pretrained sequence
-        # although in theory this could break, i think in practice it will be fine
-        # self.observation_space = spaces.Sequence(spaces.Discrete(self.num_allowable_chars))
-        self.observation_space = spaces.Dict({
-            'seq': spaces.Box(0, 1, shape=(self.max_pretrain_length, self.num_allowable_chars), dtype=np.int64),
-            'len': spaces.Discrete(self.max_pretrain_length + 1),  # +1 to include 0
-        })
-        # we are first going to try just adding a character at a time
-        self.action_space = spaces.Box(0, 1, shape=(self.num_allowable_chars,), dtype=np.int64)
+        self._pretrain_sequence: List[int] = [] # string of characters in pretrained sequence
+        
+        self.observation_space = spaces.MultiDiscrete([self.num_allowable_chars] * self.max_pretrain_length + [self.max_pretrain_length + 1])
+        self.action_space = spaces.Discrete(self.num_allowable_chars)
         encoder = LZ78Encoder()
+
+        # store the no pretrain length for each train data chunk
         self.no_pretrain_len = [get_compression_length(encoder.encode(Sequence(train_data, charmap=self.charmap))) for train_data in self.train_data]
     
     def init_char_operations(self):
@@ -102,24 +91,22 @@ class AliceCompressorEnv(gym.Env):
         self.char_to_int = {char: int for char, int in zip(self.allowable_chars, all_char_int)}
         self.int_to_char = {int: char for char, int in zip(self.allowable_chars, all_char_int)}
     
-    def one_hot_encode_char(self, char: str) -> np.ndarray:
-        """
-        One-hot encode a character
-        """
-        idx = self.char_to_int[char]
-        one_hot = np.zeros(self.num_allowable_chars)
-        one_hot[idx] = 1
-        return one_hot
+    # def one_hot_encode_char(self, char: str) -> np.ndarray:
+    #     """
+    #     One-hot encode a character
+    #     """
+    #     idx = self.char_to_int[char]
+    #     one_hot = np.zeros(self.num_allowable_chars)
+    #     one_hot[idx] = 1
+    #     return one_hot
 
     def _get_obs(self):
-        # returns current pretrain sequencepadded_seq = np.zeros(self.max_pretrain_length, dtype=np.int64)
-        padded_seq = np.zeros((self.max_pretrain_length, self.num_allowable_chars), dtype=np.int64)
-        if len(self._pretrain_sequence) > 0:
-            padded_seq[:len(self._pretrain_sequence)] = np.array([self.one_hot_encode_char(char) for char in self._pretrain_sequence], dtype=np.int64)
-        return {
-            'seq': padded_seq,
-            'len': len(self._pretrain_sequence),
-        }
+        # returns the current pretrain sequence as a list of integers padded with 0s and the length of the sequence as the last element of the list
+
+        padded_seq = [0] * self.max_pretrain_length + [len(self._pretrain_sequence)]
+        padded_seq[:len(self._pretrain_sequence)] = self._pretrain_sequence.copy()
+        return np.array(padded_seq)
+        
 
     def reset(self, seed: Optional[int] = 78, options: Optional[dict] = None):
         """Start a new episode.
@@ -139,29 +126,26 @@ class AliceCompressorEnv(gym.Env):
         """Execute one timestep within the environment.
 
         Args:
-            action: A one-hot encoded action
+            action: An action
 
         Returns:
             tuple: (observation, reward, terminated, truncated, info)
         """
-        self._pretrain_sequence.append(self.int_to_char[np.argmax(action)])
+        self._pretrain_sequence.append(action)
+        pretrain_string = ''.join([self.int_to_char[val] for val in self._pretrain_sequence])
         terminated = (len(self._pretrain_sequence) == self.max_pretrain_length)
-
-        # Simple reward structure: +1 for reaching target, 0 otherwise
-        # Alternative: could give small negative rewards for each step to encourage efficiency
-        # convert the sequence of ints to a string that can be used to compute the reward
-        # switch to just randomly choosing one chunk of train data to compute the reward
-        randomly_chosen_index = np.random.randint(len(self.train_data), size=size_batch)
-        rewards = [compute_reward(self._pretrain_sequence, self.train_data[i], self.charmap, self.no_pretrain_len[i]) for i in randomly_chosen_index]
+        # randomly choosing one chunk of train data to compute the reward
+        randomly_chosen_index = self.np_random.integers(len(self.train_data), size=size_batch)
+        rewards = [compute_reward(pretrain_string, self.train_data[i], self.charmap, self.no_pretrain_len[i]) for i in randomly_chosen_index]
         reward = np.mean(rewards)
         return self._get_obs(), reward, terminated, False, {}
 
 if __name__ == "__main__":
     env = gym.make('alice-compressor-v0')
     obs = env.reset()
-    print(obs)
+    print(f"obs: {obs}")
     action = env.action_space.sample()
-    print(action)
+    print(f"action: {action}")
     obs, reward, terminated, truncated, info = env.step(action)
     print(obs)
     print(reward)

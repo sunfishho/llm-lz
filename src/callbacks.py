@@ -93,19 +93,20 @@ class RolloutPrintCallback(BaseCallback):
         self.eval_env = env_fn()
 
     def _on_step(self) -> bool:
-        if self.num_timesteps > 0 and self.num_timesteps % self.print_freq == 0:
+        if self.num_timesteps % self.print_freq == 0:
             obs, _ = self.eval_env.reset(seed=78)
             seq = []
             # Use unwrapped to access private attributes of the underlying environment
             base_env = self.eval_env.unwrapped
             reward = 0.0
             for _ in range(self.rollout_length):
-                obs_input = {k: np.expand_dims(v, axis=0) for k, v in obs.items()}
-                action, _ = self.model.policy.predict(obs_input, deterministic=True)
-                obs, reward, terminated, truncated, info = self.eval_env.step(action[0])
+                # obs_input = {k: np.expand_dims(v, axis=0) for k, v in obs.items()}
+                action, _ = self.model.policy.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, _ = self.eval_env.step(int(action))
                 seq.append(base_env._pretrain_sequence[-1])
                 if terminated or truncated:
                     break
+            seq = [self.eval_env.int_to_char[val] for val in seq]
             print(f"\n[Rollout @ {self.num_timesteps} steps] len={len(seq)} reward={reward:.3f}\n{seq}\n")
             # Reset to avoid carrying over terminal state into the next callback invocation
             self.eval_env.reset(seed=78)
