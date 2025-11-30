@@ -16,7 +16,7 @@ def train():
     env = AliceCompressorEnv()
 
     save_callback = SavePolicyCallback(
-        save_freq=2048,
+        save_freq=512,
         save_path=model_dir,
         prefix="alice_compressor_policy",
         verbose=1,
@@ -25,7 +25,7 @@ def train():
     reward_plot_callback = RewardPlotCallback(
         save_path=os.path.join(plot_dir, "reward_plot.png"),
         smooth_window=200,
-        save_freq=2048,
+        save_freq=8192,
         verbose=1,
     )
 

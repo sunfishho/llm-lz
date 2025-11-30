@@ -36,7 +36,7 @@ def sample_rollout(policy, env, rollout_length=100):
             obs,
             state=lstm_states,
             episode_start=episode_starts,
-            deterministic=True,
+            deterministic=False,
         )
         obs, reward, terminated, truncated, _ = env.step(int(action))
         seq_chars.append(env.int_to_char[env._pretrain_sequence[-1]])
@@ -62,12 +62,11 @@ def main():
     test_no_pretrain_len = compute_no_pretrain_lengths(env.test_data, env.charmap)
     test_reward = evaluate_dataset_reward(env, env.test_data, test_no_pretrain_len, seq_chars)
 
-    pretrain_seq = "".join(seq_chars)
     print(f"Loaded policy from {MODEL_PATH}")
     print(f"Rollout length: {len(seq_chars)}  Reward from rollout env: {rollout_reward:.3f}")
     print(f"Avg reward on train data: {train_reward:.3f}")
     print(f"Avg reward on test data: {test_reward:.3f}")
-    print(f"Pretrain sequence:\n{pretrain_seq}")
+    print(f"Pretrain sequence:\n{seq_chars}")
 
 
 if __name__ == "__main__":

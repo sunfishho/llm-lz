@@ -101,7 +101,7 @@ class RolloutPrintCallback(BaseCallback):
             reward = 0.0
             for _ in range(self.rollout_length):
                 # obs_input = {k: np.expand_dims(v, axis=0) for k, v in obs.items()}
-                action, _ = self.model.policy.predict(obs, deterministic=True)
+                action, _ = self.model.policy.predict(obs, deterministic=False)
                 obs, reward, terminated, truncated, _ = self.eval_env.step(int(action))
                 seq.append(base_env._pretrain_sequence[-1])
                 if terminated or truncated:
