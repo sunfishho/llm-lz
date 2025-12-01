@@ -3,10 +3,10 @@ import numpy as np
 
 from alice_compressor import AliceCompressorEnv, compute_reward, get_compression_length
 from lz78 import LZ78Encoder, Sequence
-from alice_mlp import AliceManualCriticPolicy, RewardFromObs  # ensure pickle classes are available
+from alice_lstm import AliceManualCriticPolicy, RewardFromObs  # ensure pickle classes are available
 
 
-MODEL_PATH = "model_saves_mlp/alice_compressor_policy_mlp.pkl"
+MODEL_PATH = "model_saves_lstm/alice_compressor_policy_lstm.pkl"
 SEED = 78
 
 
@@ -38,20 +38,28 @@ def evaluate_dataset_reward(env, dataset, no_pretrain_len, seq_chars):
 
 def sample_rollout(policy, env, rollout_length=100):
     obs, _ = env.reset(seed=SEED)
+    lstm_states = None
+    episode_starts = np.array([True], dtype=bool)
     seq_chars = []
     reward = 0.0
 
     for _ in range(rollout_length):
-        action, _ = policy.predict(obs, deterministic=False)
+        action, lstm_states = policy.predict(
+            obs,
+            state=lstm_states,
+            episode_start=episode_starts,
+            deterministic=False,
+        )
         obs, reward, terminated, truncated, _ = env.step(int(action))
         seq_chars.append(env.int_to_char[env._pretrain_sequence[-1]])
+        episode_starts = np.array([terminated or truncated], dtype=bool)
         if terminated or truncated:
             break
 
     return seq_chars, reward
 
 def test_best_rollout(env):
-    with open("model_saves_mlp/alice_compressor_policy_mlp_best_rollout.txt", "r", encoding="utf-8") as f:
+    with open("model_saves_lstm/alice_compressor_policy_lstm_best_rollout.txt", "r", encoding="utf-8") as f:
         raw = f.read().strip()
     # Expect a Python list literal like ['a', ' ', 'b']; eval safely
     try:
@@ -71,6 +79,8 @@ def main():
         policy = AliceManualCriticPolicy.load(
             MODEL_PATH,
             device="mps",
+            n_lstm_layers=3,
+            reward_evaluator=reward_evaluator,
         )
     except FileNotFoundError:
         print(f"Model file not found at {MODEL_PATH}", file=sys.stderr)

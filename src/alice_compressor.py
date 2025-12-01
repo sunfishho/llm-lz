@@ -59,7 +59,7 @@ def generate_train_test(text: str, train_fraction: float = 0.7, chunk_size: int 
     return train_data, test_data
 
 class AliceCompressorEnv(gym.Env):
-    def __init__(self, seed: int = 78, max_pretrain_length: int = 100, chunk_size: int = 1000):
+    def __init__(self, seed: int = 78, max_pretrain_length: int = 100, chunk_size: int = 1000, size_batch: int = 5):
         super().__init__()
         with open("data/alice29.txt", "r", encoding="utf-8") as f:
             self.text = f.read()
@@ -72,7 +72,7 @@ class AliceCompressorEnv(gym.Env):
         self.episode_idx: int = 0
         # surely the max length of the total compression is two times the length of the entire text?
         self._pretrain_sequence: List[int] = [] # string of characters in pretrained sequence
-        
+        self.size_batch = size_batch
         self.observation_space = spaces.MultiDiscrete([self.num_allowable_chars] * self.max_pretrain_length + [self.max_pretrain_length + 1])
         self.action_space = spaces.Discrete(self.num_allowable_chars)
         encoder = LZ78Encoder()
@@ -122,7 +122,7 @@ class AliceCompressorEnv(gym.Env):
         return self._get_obs(), {}
 
 
-    def step(self, action: int, size_batch: int = 5):
+    def step(self, action: int):
         """Execute one timestep within the environment.
 
         Args:
@@ -135,7 +135,7 @@ class AliceCompressorEnv(gym.Env):
         pretrain_string = ''.join([self.int_to_char[val] for val in self._pretrain_sequence])
         terminated = (len(self._pretrain_sequence) == self.max_pretrain_length)
         # randomly choosing one chunk of train data to compute the reward
-        randomly_chosen_index = self.np_random.integers(len(self.train_data), size=size_batch)
+        randomly_chosen_index = self.np_random.integers(len(self.train_data), size=self.size_batch)
         rewards = [compute_reward(pretrain_string, self.train_data[i], self.charmap, self.no_pretrain_len[i]) for i in randomly_chosen_index]
         reward = np.mean(rewards)
         return self._get_obs(), reward, terminated, False, {}

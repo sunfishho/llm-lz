@@ -1,9 +1,9 @@
 import gymnasium as gym
 from alice_compressor import AliceCompressorEnv
-from stable_baselines3 import PPO
-from stable_baselines3.common.policies import ActorCriticPolicy
+from sb3_contrib.ppo_recurrent import RecurrentPPO
+from sb3_contrib.common.recurrent.policies import RecurrentActorCriticPolicy
 from stable_baselines3.common.callbacks import ProgressBarCallback
-from stable_baselines3.common.utils import set_random_seed
+from stable_baselines3.common.utils import get_device, set_random_seed
 from callbacks import RewardPlotCallback, SavePolicyCallback, RolloutPrintCallback, SaveBestRewardCallback
 from alice_compressor import compute_reward
 import numpy as np
@@ -42,9 +42,9 @@ class RewardFromObs:
         return torch.tensor(rewards, device=obs_tensor.device, dtype=torch.float32).unsqueeze(1)
 
 
-class AliceManualCriticPolicy(ActorCriticPolicy):
+class AliceManualCriticPolicy(RecurrentActorCriticPolicy):
     """
-    Feedforward policy that keeps the action network but replaces the critic
+    Recurrent policy that keeps the action network but replaces the critic
     with a deterministic reward evaluator from alice_compressor.
     """
 
@@ -53,32 +53,54 @@ class AliceManualCriticPolicy(ActorCriticPolicy):
         super().__init__(*args, **kwargs)
         self.reward_evaluator = reward_evaluator
 
-    def forward(self, obs: torch.Tensor, deterministic: bool = False):
-        actions, values_super, log_prob = super().forward(obs, deterministic=deterministic)
+    def forward(self, obs: torch.Tensor, lstm_states, episode_starts, deterministic: bool = False):
+        actions, _, log_prob, new_lstm_states = super().forward(obs, lstm_states, episode_starts, deterministic)
         values = self.reward_evaluator(obs)
-        return actions, values.detach(), log_prob
+        return actions, values.detach(), log_prob, new_lstm_states
 
-    def evaluate_actions(self, obs: torch.Tensor, actions: torch.Tensor):
-        values_super, log_prob, entropy = super().evaluate_actions(obs, actions)
+    def evaluate_actions(self, obs: torch.Tensor, actions: torch.Tensor, lstm_states, episode_starts):
+        _, log_prob, entropy = super().evaluate_actions(obs, actions, lstm_states, episode_starts)
         values = self.reward_evaluator(obs)
         return values.detach(), log_prob, entropy
 
+    @classmethod
+    def load(
+        cls,
+        path: str,
+        device: str | torch.device = "auto",
+        reward_evaluator: RewardFromObs | None = None,
+        n_lstm_layers: int = 1,
+    ):
+        """
+        Override policy loading so we can inject the LSTM architecture and reward evaluator.
+        """
+        device = get_device(device)
+        saved_variables = torch.load(path, map_location=device, weights_only=False)
+        constructor_kwargs = saved_variables["data"]
+        constructor_kwargs["n_lstm_layers"] = n_lstm_layers
+        if reward_evaluator is not None:
+            constructor_kwargs["reward_evaluator"] = reward_evaluator
+        model = cls(**constructor_kwargs)
+        if reward_evaluator is not None:
+            model.reward_evaluator = reward_evaluator
+        model.load_state_dict(saved_variables["state_dict"])
+        model.to(device)
+        return model
 
-model_dir = "model_saves_mlp"
-plot_dir = "plots_mlp"
+
+model_dir = "model_saves_lstm"
+plot_dir = "plots_lstm"
 device = 'mps'
 seed = 78
 def train():
     set_random_seed(seed)
     env = AliceCompressorEnv(size_batch=20)
-    env.reset(seed=seed)
-    env.action_space.seed(seed)
 
     save_callback = SavePolicyCallback(
         save_freq=2048,
         save_path=model_dir,
         prefix="alice_compressor_policy",
-        suffix="mlp",
+        suffix="lstm",
         verbose=1,
     )
 
@@ -101,11 +123,11 @@ def train():
     )
 
     save_best_callback = SaveBestRewardCallback(
-        save_path=os.path.join(model_dir, "alice_compressor_policy_mlp_best"),
+        save_path=os.path.join(model_dir, "alice_compressor_policy_lstm_best"),
         verbose=1,
     )
 
-    model = PPO(
+    model = RecurrentPPO(
         policy=AliceManualCriticPolicy,
         env=env,
         verbose=1,
@@ -113,6 +135,7 @@ def train():
         device=device,
         policy_kwargs={
             "reward_evaluator": reward_evaluator,
+            "n_lstm_layers": 3,  # set LSTM layers to 3
         },
     )
     NUM_TIMESTEPS = 10_000_000

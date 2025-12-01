@@ -8,23 +8,18 @@ import gymnasium as gym
 import os
 
 class SavePolicyCallback(BaseCallback):
-    def __init__(self, save_freq: int, save_path: str, prefix: str = "policy", num_layers: int = 1, hidden_size: int = 256, verbose: int = 0, is_lstm: bool = False):
+    def __init__(self, save_freq: int, save_path: str, prefix: str = "policy", verbose: int = 0, suffix: str = ""):
         super().__init__(verbose)
         self.save_freq = save_freq
         self.save_path = save_path
         self.prefix = prefix
-        self.num_layers = num_layers
-        self.hidden_size = hidden_size
-        self.is_lstm = is_lstm
+        self.suffix = suffix
     def _init_callback(self) -> None:
         os.makedirs(self.save_path, exist_ok=True)
 
     def _on_step(self) -> bool:
         if self.num_timesteps > 0 and self.num_timesteps % self.save_freq == 0:
-            if self.is_lstm:
-                path = os.path.join(self.save_path, f"{self.prefix}_hidden_size={self.hidden_size}_num_layers={self.num_layers}.pkl")
-            else:
-                path = os.path.join(self.save_path, f"{self.prefix}_mlp.pkl")
+            path = os.path.join(self.save_path, f"{self.prefix}_{self.suffix}.pkl")
             self.model.policy.save(path)
             if self.verbose > 0:
                 print(f"Saved policy to {path}")
@@ -115,3 +110,42 @@ class RolloutPrintCallback(BaseCallback):
             # Reset to avoid carrying over terminal state into the next callback invocation
             self.eval_env.reset(seed=78)
         return True
+
+class SaveBestRewardCallback(BaseCallback):
+    """
+    Track best mean training reward seen so far (from rollout buffer 'rewards')
+    and save the policy plus the actual in-progress rollout that achieved it.
+    """
+
+    def __init__(self, save_path: str, verbose: int = 0):
+        super().__init__(verbose)
+        self.save_path = save_path
+        self.best_reward = -np.inf
+
+    def _init_callback(self) -> None:
+        os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+
+    def _on_step(self) -> bool:
+        rewards = self.locals.get("rewards")
+        if rewards is None:
+            return True
+        mean_reward = float(np.mean(rewards))
+        if mean_reward > self.best_reward:
+            self.best_reward = mean_reward
+            self.model.policy.save(self.save_path)
+            if self.verbose > 0:
+                print(f"New best mean reward {mean_reward:.3f}, saved policy to {self.save_path}")
+            # Capture and persist the in-training rollout sequence that produced this reward snapshot.
+            try:
+                env = self.training_env.envs[0].unwrapped
+            except Exception:
+                env = getattr(self.training_env, "unwrapped", self.training_env)
+            if hasattr(env, "_pretrain_sequence") and hasattr(env, "int_to_char"):
+                seq_chars = [env.int_to_char[val] for val in env._pretrain_sequence]
+                rollout_path = os.path.splitext(self.save_path)[0] + "_rollout.txt"
+                with open(rollout_path, "w", encoding="utf-8") as f:
+                    f.write(str(seq_chars))
+                if self.verbose > 0:
+                    print(f"Saved best in-training rollout to {rollout_path}")
+        return True
+
