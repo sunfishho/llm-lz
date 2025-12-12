@@ -30,7 +30,7 @@ class RewardPlotCallback(BaseCallback):
     Collects per-step rewards and saves a smoothed reward plot at the end.
     """
 
-    def __init__(self, save_path: str, smooth_window: int = 200, save_freq: int | None = None, verbose: int = 0):
+    def __init__(self, save_path: str, smooth_window: int = 1000, save_freq: int | None = None, verbose: int = 0):
         super().__init__(verbose)
         self.save_path = save_path
         self.smooth_window = smooth_window
@@ -84,7 +84,7 @@ class RolloutPrintCallback(BaseCallback):
     (avoids leaking `_pretrain_sequence` length into the collector).
     """
 
-    def __init__(self, env_fn, print_freq: int = 16384, rollout_length: int = 100, verbose: int = 1):
+    def __init__(self, env_fn, print_freq: int = 16384, rollout_length: int = 1000, verbose: int = 1):
         super().__init__(verbose)
         self.print_freq = print_freq
         self.rollout_length = rollout_length
@@ -136,16 +136,24 @@ class SaveBestRewardCallback(BaseCallback):
             if self.verbose > 0:
                 print(f"New best mean reward {mean_reward:.3f}, saved policy to {self.save_path}")
             # Capture and persist the in-training rollout sequence that produced this reward snapshot.
-            try:
-                env = self.training_env.envs[0].unwrapped
-            except Exception:
-                env = getattr(self.training_env, "unwrapped", self.training_env)
-            if hasattr(env, "_pretrain_sequence") and hasattr(env, "int_to_char"):
-                seq_chars = [env.int_to_char[val] for val in env._pretrain_sequence]
+            envs = []
+            if hasattr(self.training_env, "envs"):
+                envs = [e.unwrapped for e in self.training_env.envs]
+            elif hasattr(self.training_env, "unwrapped"):
+                envs = [self.training_env.unwrapped]
+
+            best_seq_chars: list[str] = []
+            for env in envs:
+                seq = getattr(env, "_pretrain_sequence", None)
+                if seq and hasattr(env, "int_to_char"):
+                    seq_chars = [env.int_to_char[val] for val in seq]
+                    if len(seq_chars) > len(best_seq_chars):
+                        best_seq_chars = seq_chars
+
+            if best_seq_chars:
                 rollout_path = os.path.splitext(self.save_path)[0] + "_rollout.txt"
                 with open(rollout_path, "w", encoding="utf-8") as f:
-                    f.write(str(seq_chars))
+                    f.write(str(best_seq_chars))
                 if self.verbose > 0:
                     print(f"Saved best in-training rollout to {rollout_path}")
         return True
-

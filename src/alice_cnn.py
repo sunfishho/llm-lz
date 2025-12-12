@@ -48,6 +48,7 @@ class RewardFromObs:
 class SeqCNNExtractor(BaseFeaturesExtractor):
     """
     CNN feature extractor for the padded sequence observation treated as a 1D signal.
+    Architecture defined in __init__
     """
 
     def __init__(self, observation_space: spaces.MultiDiscrete, num_filters: int = 64, kernel_size: int = 3):
@@ -84,24 +85,24 @@ class AliceCNNPolicy(ActorCriticPolicy):
         self.reward_evaluator = reward_evaluator
 
     def forward(self, obs: torch.Tensor, deterministic: bool = False):
-        actions, values_super, log_prob = super().forward(obs, deterministic=deterministic)
+        actions, _, log_prob = super().forward(obs, deterministic=deterministic)
         values = self.reward_evaluator(obs)
         return actions, values.detach(), log_prob
 
     def evaluate_actions(self, obs: torch.Tensor, actions: torch.Tensor):
-        values_super, log_prob, entropy = super().evaluate_actions(obs, actions)
+        _, log_prob, entropy = super().evaluate_actions(obs, actions)
         values = self.reward_evaluator(obs)
         return values.detach(), log_prob, entropy  
 
 model_dir = "model_saves_cnn"
 plot_dir = "plots_cnn"
-device = "mps"
+device = "cpu"
 seed = 78
 
 
 def train():
     set_random_seed(seed)
-    env = AliceCompressorEnv(size_batch=20)
+    env = AliceCompressorEnv(size_batch=5)
     env.reset(seed=seed)
     env.action_space.seed(seed)
 
@@ -115,7 +116,7 @@ def train():
 
     reward_plot_callback = RewardPlotCallback(
         save_path=os.path.join(plot_dir, "reward_plot.png"),
-        smooth_window=200,
+        smooth_window=1000,
         save_freq=8192,
         verbose=1,
     )
@@ -123,7 +124,7 @@ def train():
     rollout_print_callback = RolloutPrintCallback(
         env_fn=lambda: gym.make("alice-compressor-v0", seed=seed),
         print_freq=8192,
-        rollout_length=100,
+        rollout_length=300,
         verbose=1,
     )
 
@@ -137,7 +138,7 @@ def train():
         charmap=env.charmap,
         no_pretrain_len=env.no_pretrain_len,
         int_to_char=env.int_to_char,
-        sample_k=10,
+        sample_k=5,
         seed=seed,
     )
 

@@ -67,7 +67,7 @@ class AliceManualCriticPolicy(RecurrentActorCriticPolicy):
     def load(
         cls,
         path: str,
-        device: str | torch.device = "auto",
+        device: str | torch.device = "mps",
         reward_evaluator: RewardFromObs | None = None,
         n_lstm_layers: int = 1,
     ):
@@ -94,7 +94,7 @@ device = 'mps'
 seed = 78
 def train():
     set_random_seed(seed)
-    env = AliceCompressorEnv(size_batch=20)
+    env = AliceCompressorEnv(size_batch=5)
 
     save_callback = SavePolicyCallback(
         save_freq=2048,
@@ -106,19 +106,19 @@ def train():
 
     reward_plot_callback = RewardPlotCallback(
         save_path=os.path.join(plot_dir, "reward_plot.png"),
-        smooth_window=200,
+        smooth_window=1000,
         save_freq=8192,
         verbose=1,
     )
 
-    rollout_print_callback = RolloutPrintCallback(env_fn=lambda: gym.make('alice-compressor-v0', seed=seed), print_freq=8192, rollout_length=100, verbose=1)
+    rollout_print_callback = RolloutPrintCallback(env_fn=lambda: gym.make('alice-compressor-v0', seed=seed), print_freq=8192, rollout_length=300, verbose=1)
 
     reward_evaluator = RewardFromObs(
         train_data=env.train_data,
         charmap=env.charmap,
         no_pretrain_len=env.no_pretrain_len,
         int_to_char=env.int_to_char,
-        sample_k=10,
+        sample_k=5,
         seed=seed,
     )
 
@@ -138,7 +138,7 @@ def train():
             "n_lstm_layers": 3,  # set LSTM layers to 3
         },
     )
-    NUM_TIMESTEPS = 10_000_000
+    NUM_TIMESTEPS = 1_000_000
     iters = 0
     while iters < 5:
         model.learn(
