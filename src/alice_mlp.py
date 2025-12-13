@@ -89,7 +89,7 @@ def train():
         verbose=1,
     )
 
-    rollout_print_callback = RolloutPrintCallback(env_fn=lambda: gym.make('alice-compressor-v0', seed=seed), print_freq=8192, rollout_length=300, verbose=1)
+    rollout_print_callback = RolloutPrintCallback(env_fn=lambda: gym.make('alice-compressor-v0', seed=seed), print_freq=8192, rollout_length=100, verbose=1)
 
     reward_evaluator = RewardFromObs(
         train_data=env.train_data,

@@ -67,7 +67,7 @@ def generate_train_test(text: str, train_fraction: float = 0.7, chunk_size: int 
     return train_data, test_data
 
 class AliceCompressorEnv(gym.Env):
-    def __init__(self, seed: int = 78, max_pretrain_length: int = 1000, chunk_size: int = 100, size_batch: int = 5):
+    def __init__(self, seed: int = 78, max_pretrain_length: int = 100, chunk_size: int = 1000, size_batch: int = 5):
         """
         Args:
             seed: Random seed for reproducibility
@@ -112,12 +112,11 @@ class AliceCompressorEnv(gym.Env):
         return np.array(padded_seq)
         
 
-    def reset(self, seed: Optional[int] = 78, options: Optional[dict] = None):
+    def reset(self, seed: Optional[int] = 78):
         """Start a new episode.
 
         Args:
             seed: Random seed for reproducible episodes
-            options: Additional configuration (unused in this example)
         """
         # IMPORTANT: Must call this first to seed the random number generator
         super().reset(seed=seed)

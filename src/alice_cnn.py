@@ -96,7 +96,7 @@ class AliceCNNPolicy(ActorCriticPolicy):
 
 model_dir = "model_saves_cnn"
 plot_dir = "plots_cnn"
-device = "cpu"
+device = "mps"
 seed = 78
 
 
@@ -124,7 +124,7 @@ def train():
     rollout_print_callback = RolloutPrintCallback(
         env_fn=lambda: gym.make("alice-compressor-v0", seed=seed),
         print_freq=8192,
-        rollout_length=300,
+        rollout_length=100,
         verbose=1,
     )
 
@@ -152,7 +152,7 @@ def train():
             "reward_evaluator": reward_evaluator,
         },
     )
-    NUM_TIMESTEPS = 10_000_000
+    NUM_TIMESTEPS = 1_000_000
     iters = 0
     while iters < 5:
         model.learn(
