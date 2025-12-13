@@ -24,6 +24,6 @@ This directory contains experiments that use reinforcement learning to search fo
 
 ## Data, artifacts, and variants
 - `data/` holds `alice29.txt`
-- `model_saves_*/` and `plots_*/` directories store trained policies, “best rollout” text files, and reward plots for each architecture.
+- `model_saves_*/` and `plots_*/` directories stores the “best rollout” text files and the optimal plots respectively. The saved models are not here due to GitHub file size restrictions.
 
 Note: while most dependencies are mentioned in requirements.txt, to run the code in this library you must also follow the installation instructions in https://github.com/NSagan271/lz78_rust/tree/main in the pretrain-compression branch.
